@@ -1282,3 +1282,196 @@ const getTodayAbsentTeacherList = async (user, body, query) => {
   };
   
   
+  const getTodayNotMarkedStudentList = async (user, query) => {
+    // Extract classId and sectionId from the query
+    const { classId, sectionId } = query;
+  
+    // Get today's date in the required format
+    let date = new Date();
+    let month = date.getMonth() + 1;
+    if (month < 10) month = `0${month}`;
+    let todayDate = date.getDate();
+    if (todayDate < 10) todayDate = `0${todayDate}`;
+    let today = `${date.getFullYear()}-${month}-${todayDate}`;
+  
+    // Fetch marked attendance for today
+    let attendanceMatchCondition = {
+      schoolId: user.school,
+      userId: { $exists: true },
+    };
+  
+    if (classId) {
+      attendanceMatchCondition.classId = mongoose.Types.ObjectId(classId);
+    }
+    if (sectionId) {
+      attendanceMatchCondition.sectionId = mongoose.Types.ObjectId(sectionId);
+    }
+  
+    let markedAttendance = await Attendance.aggregate([
+      {
+        $match: attendanceMatchCondition,
+      },
+      {
+        $addFields: {
+          todayStatus: "$status",
+        },
+      },
+      { $unwind: "$todayStatus" },
+      {
+        $addFields: {
+          attendanceDate: { $dateToString: { format: "%Y-%m-%d", date: '$todayStatus.day' } },
+        },
+      },
+      {
+        $match: {
+          attendanceDate: today,
+        },
+      },
+      {
+        $project: {
+          userId: 1,
+        },
+      },
+    ]);
+  
+    let userId = markedAttendance.map((attendance) => mongoose.Types.ObjectId(attendance.userId));
+  
+    // Fetch students who have not marked attendance
+    let userMatchCondition = {
+      school: user.school,
+      roleId: 0,
+      _id: { $nin: userId },
+    };
+  
+    if (classId) {
+      userMatchCondition.class = mongoose.Types.ObjectId(classId);
+    }
+    if (sectionId) {
+      userMatchCondition.section = mongoose.Types.ObjectId(sectionId);
+    }
+  
+    let notMarkedAttendance = await User.aggregate([
+      {
+        $match: userMatchCondition,
+      },
+      {
+        $addFields: {
+          todayStatus: {
+            day: date,
+            status: "Not Marked",
+          },
+        },
+      },
+      {
+        $project: {
+          firstName: 1,
+          lastName: 1,
+          _id: 1,
+          email: 1,
+          todayStatus: 1,
+        },
+      },
+    ]);
+  
+    // If class and section are provided, fetch classSection details
+    let classSection = [];
+    if (classId && sectionId) {
+      const classSection = await Class.aggregate([
+        {
+          $match: {
+            _id: mongoose.Types.ObjectId(query.classId),
+            school: user.school,
+          }
+        },
+        { $unwind: "$section" },
+        { $match: { 'section._id': mongoose.Types.ObjectId(query.sectionId) } }
+      ])
+  
+      let date = new Date()
+      let month = date.getMonth() + 1
+      if (month < 10) month = `0${month}`
+      let todayDate = date.getDate()
+      if (todayDate < 10) todayDate = `0${todayDate}`
+      let today = `${date.getFullYear()}-${month}-${todayDate}`
+  
+      let markedAttendance = await Attendance.aggregate([
+        {
+          $match: {
+            classId: mongoose.Types.ObjectId(query.classId),
+            sectionId: query.sectionId,
+            schoolId: user.school,
+            userId: { $exists: true }
+          }
+        },
+        {
+          $addFields: {
+            todayStatus: "$status"
+          }
+        },
+        { $unwind: "$todayStatus" },
+        {
+          $addFields: {
+            attendanceDate: { $dateToString: { format: "%Y-%m-%d", date: '$todayStatus.day' } }
+          }
+        },
+        {
+          $match: {
+            attendanceDate: today
+          }
+        },
+        {
+          $project: {
+            "userId": 1
+          }
+        }
+      ]);
+  
+      let userId = []
+      for (let i = 0; i < markedAttendance.length; i++) {
+        userId.push(Number(markedAttendance[i].userId))
+      }
+  
+      let notMarkedAttendance = await User.aggregate([
+        {
+          $match: {
+            class: mongoose.Types.ObjectId(query.classId),
+            section: query.sectionId,
+            school: user.school,
+            roleId: 0,
+            _id: { $nin: userId }
+          }
+        },
+        {
+          $addFields: {
+            todayStatus: {
+              day: date,
+              status: "Not Marked",
+            }
+          }
+        },
+        {
+          $project: {
+            "firstName": 1,
+            "lastName": 1,
+            "_id": 1,
+            "email": 1,
+            "todayStatus": 1
+          }
+        }
+      ]);
+  
+      return {
+        count: notMarkedAttendance.length,
+        className: classSection[0].name,
+        sectionName: classSection[0].section.name,
+        data: notMarkedAttendance
+  
+      };
+    }
+  
+    return {
+      count: notMarkedAttendance.length,
+      data: notMarkedAttendance,
+  
+    };
+  };
